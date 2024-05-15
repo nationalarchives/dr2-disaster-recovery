@@ -2,8 +2,21 @@ import sbtrelease.ReleaseStateTransformations.*
 import Dependencies.*
 import uk.gov.nationalarchives.sbt.Log4j2MergePlugin.log4j2MergeStrategy
 
+import java.io.FileWriter
+import java.net.URI
+
 ThisBuild / organization := "uk.gov.nationalarchives"
 ThisBuild / scalaVersion := "3.4.1"
+
+lazy val setLatestTagOutput = taskKey[Unit]("Sets a GitHub actions output for the latest tag")
+
+setLatestTagOutput := {
+  val fileWriter = new FileWriter(sys.env("GITHUB_OUTPUT"), true)
+  fileWriter.write(s"latest-tag=${(ThisBuild / version).value}\n")
+  fileWriter.close()
+}
+
+publishArtifact := false
 
 lazy val releaseSettings = Seq(
   releaseProcess := Seq[ReleaseStep](
@@ -11,6 +24,7 @@ lazy val releaseSettings = Seq(
     runClean,
     runTest,
     setReleaseVersion,
+    releaseStepTask(setLatestTagOutput),
     commitReleaseVersion,
     tagRelease,
     setNextVersion,
@@ -22,8 +36,8 @@ lazy val releaseSettings = Seq(
   organizationName := "National Archives",
   scmInfo := Some(
     ScmInfo(
-      url("https://github.com/nationalarchives/dr2-preservica-client"),
-      "git@github.com:nationalarchives/dr2-preservica-client.git"
+      url("https://github.com/nationalarchives/dr2-disaster-recovery"),
+      "git@github.com:nationalarchives/dr2-disaster-recovery.git"
     )
   ),
   developers := List(
@@ -31,15 +45,16 @@ lazy val releaseSettings = Seq(
       id = "tna-digital-archiving-jenkins",
       name = "TNA Digital Archiving",
       email = "digitalpreservation@nationalarchives.gov.uk",
-      url = url("https://github.com/nationalarchives/dr2-preservica-client")
+      url = url("https://github.com/nationalarchives/dr2-disaster-recovery")
     )
   ),
   description := "A client to communicate with the Preservica API",
-  licenses := List("MIT" -> new URL("https://choosealicense.com/licenses/mit/")),
-  homepage := Some(url("https://github.com/nationalarchives/dr2-preservica-client"))
+  licenses := List("MIT" -> URI.create("https://choosealicense.com/licenses/mit/").toURL),
+  homepage := Some(url("https://github.com/nationalarchives/dr2-disaster-recovery"))
 )
 
 lazy val root = (project in file("."))
+  .settings(releaseSettings)
   .settings(
     name := "dr2-disaster-recovery",
     libraryDependencies ++= Seq(

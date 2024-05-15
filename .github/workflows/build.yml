@@ -3,20 +3,6 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
-    inputs:
-      environment:
-        type: choice
-        description: 'Environment'
-        required: true
-        options:
-          - intg
-          - staging
-          - prod
-        default: 'intg'
-      to-deploy:
-        description: 'Version to deploy'
-        required: true
 permissions:
   id-token: write
   contents: write
@@ -25,26 +11,45 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
+      - id: build
+        run: |
           git config --global user.email digitalpreservation@nationalarchives.gov.uk
           git config --global user.name tna-digital-archiving-jenkins
           git checkout -b $BRANCH_NAME
           git push -u origin $BRANCH_NAME
-          sbt '+release with-defaults'
+          sbt 'release with-defaults'
         env:
           BRANCH_NAME: version-bump-${{ github.run_id }}${{ github.run_attempt }}
+      - name: Configure AWS credentials from management account
+        uses: aws-actions/configure-aws-credentials@v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.MANAGEMENT_ACCOUNT }}:role/MgmtDPGithubImageDeploy
+          aws-region: eu-west-2
+          role-session-name: DeployECRImages
+      - name: Login to ECR
+        uses: docker/login-action@v1
+        with:
+          registry: ${{ secrets.MANAGEMENT_ACCOUNT }}.dkr.ecr.eu-west-2.amazonaws.com
+      - id: build-image
+        run: | 
+          sbt assembly
+          docker build --pull --no-cache -t ${{ secrets.MANAGEMENT_ACCOUNT }}.dkr.ecr.eu-west-2.amazonaws.com/dr2-disaster-recovery:${{ steps.build.outputs.latest-tag}} .
+          docker push ${{ secrets.MANAGEMENT_ACCOUNT }}.dkr.ecr.eu-west-2.amazonaws.com/dr2-disaster-recovery:${{ steps.build.outputs.latest-tag}}
+          gh workflow run deploy.yml -f environment=intg -f to-deploy=${{ steps.build.outputs.latest-tag}}
+        env:
+          GITHUB_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
       - name: Create Pull Request
         run: gh pr create --fill --label 'Version bump'
         env:
-          GITHUB_TOKEN: ${{ secrets.WORKFLOW_PAT }}
+          GITHUB_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
       - name: Send success message
         uses: nationalarchives/dr2-github-actions/.github/actions/slack-send@main
         with:
-          message: ":white_check_mark: ${{ inputs.library-name }} has been published"
+          message: ":white_check_mark: disaster recovery has been published"
           slack-url: ${{ secrets.SLACK_WEBHOOK }}
       - name: Send failure message
         uses: nationalarchives/dr2-github-actions/.github/actions/slack-send@main
         if: failure()
         with:
-          message: ":warning: Build failed for ${{ inputs.library-name }} <https://github.com/nationalarchives/${{ inputs.repo-name }}/actions/runs/${{ github.run_id }}|View the failed workflow>"
+          message: ":warning: Build failed for disaster recovery <https://github.com/nationalarchives/dr2-disaster-recovery/actions/runs/${{ github.run_id }}|View the failed workflow>"
           slack-url: ${{ secrets.SLACK_WEBHOOK }}

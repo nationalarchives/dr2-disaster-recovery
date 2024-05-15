@@ -1,5 +1,5 @@
 FROM alpine
-COPY target/scala-3.3.3/dr2-disaster-recovery.jar /dr2-disaster-recovery.jar
+COPY target/scala-3.4.1/dr2-disaster-recovery.jar /dr2-disaster-recovery.jar
 RUN apk update && apk upgrade && apk add openjdk19-jre && \
     mkdir -p /poduser/work /poduser/repo /poduser/version && \
     chown -R 1002:1005 /poduser && \
