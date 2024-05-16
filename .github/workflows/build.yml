@@ -1,11 +1,15 @@
 name: DR2 Tag and pre deploy
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
 permissions:
   id-token: write
   contents: write
+concurrency:
+  group: image-build
+  cancel-in-progress: true
 jobs:
   deploy:
     runs-on: ubuntu-latest
