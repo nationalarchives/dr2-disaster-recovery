@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.flatspec.AnyFlatSpec
 import uk.gov.nationalarchives.builder.Main.Config
-import uk.gov.nationalarchives.utils.TestUtils.{createFile, createTable, ocflFile, readFiles}
+import uk.gov.nationalarchives.utils.TestUtils.*
 import uk.gov.nationalarchives.utils.Utils.OcflFile
 import cats.effect.unsafe.implicits.global
 import org.scalatest.matchers.should.Matchers.*
@@ -14,6 +14,9 @@ import java.nio.file.{Files, Path}
 import java.util.UUID
 
 class DatabaseSpec extends AnyFlatSpec with BeforeAndAfterEach:
+
+  val databaseUtils = new DatabaseUtils("test-database")
+  import databaseUtils.*
 
   override def afterEach(): Unit = Files.delete(Path.of("test-database"))
 

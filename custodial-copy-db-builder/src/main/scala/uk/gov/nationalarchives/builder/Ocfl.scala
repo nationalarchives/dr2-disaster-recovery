@@ -2,13 +2,10 @@ package uk.gov.nationalarchives.builder
 
 import cats.effect.kernel.Async
 import cats.implicits.*
+import io.ocfl.api.OcflRepository
+import io.ocfl.api.model.{ObjectVersionId, OcflObjectVersionFile}
 import uk.gov.nationalarchives.builder.Main.Config
-import uk.gov.nationalarchives.utils.Utils.OcflFile
-import io.ocfl.api.model.{DigestAlgorithm, ObjectVersionId, OcflObjectVersionFile}
-import io.ocfl.api.{OcflConfig, OcflRepository}
-import io.ocfl.core.OcflRepositoryBuilder
-import io.ocfl.core.extension.storage.layout.config.HashedNTupleLayoutConfig
-import io.ocfl.core.storage.{OcflStorage, OcflStorageBuilder}
+import uk.gov.nationalarchives.utils.Utils.*
 
 import java.nio.file.{Files, Paths}
 import java.time.Instant
@@ -17,20 +14,7 @@ import scala.jdk.CollectionConverters.*
 import scala.xml.XML
 
 trait Ocfl[F[_]](val config: Config):
-  private[builder] val repo: OcflRepository = {
-    val repoDir = Paths.get(config.ocflRepoDir)
-    val workDir = Paths.get(config.ocflWorkDir)
-    val storage: OcflStorage = OcflStorageBuilder.builder().fileSystem(repoDir).build
-    val ocflConfig: OcflConfig = new OcflConfig()
-    ocflConfig.setDefaultDigestAlgorithm(DigestAlgorithm.fromOcflName("sha256"))
-    new OcflRepositoryBuilder()
-      .defaultLayoutConfig(new HashedNTupleLayoutConfig())
-      .storage(storage)
-      .ocflConfig(ocflConfig)
-      .prettyPrintJson()
-      .workDir(workDir)
-      .build()
-  }
+  private[builder] val repo: OcflRepository = createOcflRepository(config.ocflRepoDir, config.ocflWorkDir)
 
   def generateOcflObjects(id: UUID): F[List[OcflFile]]
 

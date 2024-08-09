@@ -148,15 +148,18 @@ sqlite database.
 You will need to create a sqlite3 database and run the following to create the files table:
 
 ```sql
-CREATE TABLE files
+create table files
 (
-    version  int,
-    id       text,
-    name     text,
-    fileId   text,
-    zref     text,
-    path     text,
-    fileName text
+    version        int,
+    id             text,
+    name           text,
+    fileId         text,
+    zref           text,
+    path           text,
+    fileName       text,
+    ingestDateTime datetime,
+    sourceId       text,
+    citation       text
 );
 ```
 
@@ -182,5 +185,62 @@ The sqlite database must exist along with the file table.
 
 This can be run in Intellij by running the `uk.gov.nationalarchives.webapp.Main` class and providing values for the
 database path environment variable.
+
+It can also be run using `sbt run`
+
+## Database re-indexer
+This is built as a docker image but is intended to be run periodically. The program takes a subcommand and three mandatory arguments.
+
+```bash
+reindex --file-type CO --column-name asdasd --xpath //Generation//EffectiveDate
+```
+
+The program runs through these steps:
+* Select a distinct list of ids from the database.
+* For each ID, get the object from OCFL and find either the `IO_Metadata.xml` or all `CO_Metadata.xml` files.
+* Run the XPath against the metadata files and get the result. Get the ID from `<Ref>` field in the metadata XML.
+* For an `IO` update, write the value to the column name with a given `id`. For a CO, do this with the `fileId`
+
+### Arguments
+#### File type
+This can either be IO or CO and tells the reindexer whether the value for the database column we're updating is in `IO_Metadata.xml` or `CO_Metadata.xml`
+
+#### Column name
+The column in the database to write the value to
+
+#### XPath
+An XPath that will return a single value which will be written to the database column. 
+The behaviour if the XPath expression returns more than one value is undefined.
+
+### Environment Variables
+
+| Name          | Description                                                                 |
+|---------------|-----------------------------------------------------------------------------|
+| DATABASE_PATH | The path to the sqlite database                                             |
+| OCFL_REPO_DIR | The directory for the OCFL repository                                       |
+| OCFL_WORK_DIR | The directory for the OCFL work directory                                   |
+
+### Running locally.
+
+You will need to create a sqlite3 database and run the following to create the files table:
+
+```sql
+create table files
+(
+    version        int,
+    id             text,
+    name           text,
+    fileId         text,
+    zref           text,
+    path           text,
+    fileName       text,
+    ingestDateTime datetime,
+    sourceId       text,
+    citation       text
+);
+```
+
+This can be run in Intellij by running the `uk.gov.nationalarchives.reindexer.Main` class and providing values for each of
+the environment variables. You will need to provide the arguments listed above as well.
 
 It can also be run using `sbt run`

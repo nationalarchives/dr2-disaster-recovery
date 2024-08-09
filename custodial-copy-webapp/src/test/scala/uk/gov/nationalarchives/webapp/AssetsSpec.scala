@@ -22,6 +22,10 @@ import java.time.{Instant, ZoneId, LocalDateTime, ZoneOffset}
 import java.util.UUID
 
 class AssetsSpec extends AnyFlatSpec with BeforeAndAfterAll with ScalaCheckDrivenPropertyChecks:
+
+  val databaseUtils = new DatabaseUtils("test-database")
+  import databaseUtils.*
+
   private val ingestDateTime: Instant = Instant.now()
 
   override def beforeAll(): Unit = createTable()

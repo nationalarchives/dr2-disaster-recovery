@@ -3,13 +3,14 @@ package uk.gov.nationalarchives.custodialcopy
 import cats.effect.IO
 import cats.effect.std.Semaphore
 import io.ocfl.api.exception.{CorruptObjectException, NotFoundException}
-import io.ocfl.api.model.{DigestAlgorithm, ObjectVersionId, VersionInfo}
+import io.ocfl.api.model.{DigestAlgorithm, VersionInfo}
 import io.ocfl.api.{OcflConfig, OcflObjectUpdater, OcflOption, OcflRepository}
 import io.ocfl.core.OcflRepositoryBuilder
 import io.ocfl.core.extension.storage.layout.config.HashedNTupleLayoutConfig
 import io.ocfl.core.storage.OcflStorageBuilder
 import uk.gov.nationalarchives.custodialcopy.Main.{Config, IdWithSourceAndDestPaths}
 import uk.gov.nationalarchives.custodialcopy.OcflService.*
+import uk.gov.nationalarchives.utils.Utils.*
 
 import java.nio.file.Paths
 import java.util.UUID
@@ -84,7 +85,6 @@ class OcflService(ocflRepository: OcflRepository, semaphore: Semaphore[IO]) {
     }
 }
 object OcflService {
-  extension (uuid: UUID) def toHeadVersion: ObjectVersionId = ObjectVersionId.head(uuid.toString)
 
   def apply(config: Config, semaphore: Semaphore[IO]): IO[OcflService] = IO {
     val repoDir = Paths.get(config.repoDir)

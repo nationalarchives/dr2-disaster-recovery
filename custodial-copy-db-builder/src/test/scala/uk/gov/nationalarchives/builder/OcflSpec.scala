@@ -3,7 +3,7 @@ package uk.gov.nationalarchives.builder
 import cats.effect.IO
 import org.scalatest.flatspec.AnyFlatSpec
 import uk.gov.nationalarchives.builder.Main.Config
-import uk.gov.nationalarchives.builder.utils.TestUtils.*
+import uk.gov.nationalarchives.utils.TestUtils.*
 import cats.effect.unsafe.implicits.global
 import io.ocfl.api.exception.NotFoundException
 import org.scalatest.matchers.should.Matchers.*
@@ -14,9 +14,9 @@ class OcflSpec extends AnyFlatSpec:
 
   "generateOcflObjects" should "return the correct values" in {
     val id = UUID.randomUUID
-    val testConfig = initialiseRepo(id)
+    val (repoDir, workDir) = initialiseRepo(id)
     given Configuration = new Configuration:
-      override def config: Config = testConfig
+      override def config: Config = Config("test-database", "http://localhost:9001", repoDir, workDir)
 
     val files = Ocfl[IO].generateOcflObjects(id).unsafeRunSync()
 
@@ -44,10 +44,10 @@ class OcflSpec extends AnyFlatSpec:
 
   "generateOcflObjects" should "fail if the id doesn't exist in the repository" in {
     val id = UUID.randomUUID
-    val testConfig = initialiseRepo(id, addFilesToRepo = false)
+    val (repoDir, workDir) = initialiseRepo(id, addFilesToRepo = false)
 
     given Configuration = new Configuration:
-      override def config: Config = testConfig
+      override def config: Config = Config("test-database", "http://localhost:9001", repoDir, workDir)
 
     val err = intercept[NotFoundException] {
       Ocfl[IO].generateOcflObjects(id).unsafeRunSync()

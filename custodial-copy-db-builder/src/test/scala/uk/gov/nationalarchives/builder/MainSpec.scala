@@ -2,7 +2,7 @@ package uk.gov.nationalarchives.builder
 
 import cats.effect.IO
 import uk.gov.nationalarchives.builder.Main.Config
-import uk.gov.nationalarchives.builder.utils.TestUtils.*
+import uk.gov.nationalarchives.utils.TestUtils.*
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock.{okJson, post, urlEqualTo}
 import com.github.tomakehurst.wiremock.stubbing.StubMapping
@@ -15,7 +15,6 @@ import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.sqs.SqsAsyncClient
 import uk.gov.nationalarchives.DASQSClient
-import uk.gov.nationalarchives.utils.TestUtils.{createTable, readFiles}
 import cats.effect.unsafe.implicits.global
 import org.scalatest.matchers.should.Matchers.*
 
@@ -27,6 +26,9 @@ import scala.jdk.CollectionConverters.*
 import scala.xml.Elem
 
 class MainSpec extends AnyFlatSpec with BeforeAndAfterEach with BeforeAndAfterAll {
+
+  val databaseUtils = new DatabaseUtils("test-database")
+  import databaseUtils.*
 
   override def beforeAll(): Unit = createTable()
 
@@ -51,11 +53,11 @@ class MainSpec extends AnyFlatSpec with BeforeAndAfterEach with BeforeAndAfterAl
 
   "runBuilder" should "write the correct items to the database for multiple content objects" in {
     val id = UUID.randomUUID
-    val testConfig = initialiseRepo(id)
+    val (repoDir, workDir) = initialiseRepo(id)
     initialiseSqs(id)
 
     given config: Configuration = new Configuration:
-      override def config: Config = testConfig
+      override def config: Config = Config("test-database", "http://localhost:9001", repoDir, workDir)
 
     Main.runBuilder(daSQSClient).compile.drain.unsafeRunSync()
 
@@ -90,11 +92,11 @@ class MainSpec extends AnyFlatSpec with BeforeAndAfterEach with BeforeAndAfterAl
 
   "runBuilder" should "write the correct items to the database for a single content object" in {
     val id = UUID.randomUUID
-    val testConfig = initialiseRepo(id, coMetadataContent = completeCoMetadataContentElements.head :: Nil)
+    val (repoDir, workDir) = initialiseRepo(id, coMetadataContent = completeCoMetadataContentElements.head :: Nil)
     initialiseSqs(id)
 
     given config: Configuration = new Configuration:
-      override def config: Config = testConfig
+      override def config: Config = Config("test-database", "http://localhost:9001", repoDir, workDir)
 
     Main.runBuilder(daSQSClient).compile.drain.unsafeRunSync()
 
@@ -113,11 +115,11 @@ class MainSpec extends AnyFlatSpec with BeforeAndAfterEach with BeforeAndAfterAl
 
   "runBuilder" should "copy the content file to the new location" in {
     val id = UUID.randomUUID
-    val testConfig = initialiseRepo(id, coMetadataContent = completeCoMetadataContentElements.head :: Nil)
+    val (repoDir, workDir) = initialiseRepo(id, coMetadataContent = completeCoMetadataContentElements.head :: Nil)
     initialiseSqs(id)
 
     given config: Configuration = new Configuration:
-      override def config: Config = testConfig
+      override def config: Config = Config("test-database", "http://localhost:9001", repoDir, workDir)
 
     Main.runBuilder(daSQSClient).compile.drain.unsafeRunSync()
 
@@ -148,11 +150,11 @@ class MainSpec extends AnyFlatSpec with BeforeAndAfterEach with BeforeAndAfterAl
         <ContentObject><Ref>{coId}</Ref></ContentObject>
       </Metadata>
 
-    val testConfig = initialiseRepo(id, ioMetadata, coMetadata :: Nil)
+    val (repoDir, workDir) = initialiseRepo(id, ioMetadata, coMetadata :: Nil)
     initialiseSqs(id)
 
     given config: Configuration = new Configuration:
-      override def config: Config = testConfig
+      override def config: Config = Config("test-database", "http://localhost:9001", repoDir, workDir)
 
     Main.runBuilder(daSQSClient).compile.drain.unsafeRunSync()
 
@@ -170,10 +172,10 @@ class MainSpec extends AnyFlatSpec with BeforeAndAfterEach with BeforeAndAfterAl
   "runBuilder" should "call the correct SQS endpoints" in {
     val id = UUID.randomUUID
     initialiseSqs(id)
-    val testConfig = initialiseRepo(id)
+    val (repoDir, workDir) = initialiseRepo(id)
 
     given config: Configuration = new Configuration:
-      override def config: Config = testConfig
+      override def config: Config = Config("test-database", "http://localhost:9001", repoDir, workDir)
 
     Main.runBuilder(daSQSClient).compile.drain.unsafeRunSync()
 

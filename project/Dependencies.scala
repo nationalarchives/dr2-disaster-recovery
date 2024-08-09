@@ -7,9 +7,9 @@ object Dependencies {
   private lazy val scalaTestVersion = "3.2.18"
   private lazy val http4sVersion = "1.0.0-M41"
 
-  lazy val fs2 = "co.fs2" %% "fs2-core" % "3.10.2"
   lazy val fs2Core = "co.fs2" %% "fs2-core" % "3.10.2"
   lazy val log4Cats = "org.typelevel" %% "log4cats-core" % log4CatsVersion
+  lazy val declineEffect = "com.monovore" %% "decline-effect" % "2.4.1"
   lazy val log4CatsSlf4j = "org.typelevel" %% "log4cats-slf4j" % log4CatsVersion
   lazy val log4jCore = "org.apache.logging.log4j" % "log4j-core" % logbackVersion
   lazy val log4jSlf4j = "org.apache.logging.log4j" % "log4j-slf4j2-impl" % logbackVersion

@@ -27,7 +27,7 @@ def setupDirectories(serviceName: String) =
   )
 
 lazy val root = (project in file("."))
-  .aggregate(custodialCopyBackend, webapp, builder, utils)
+  .aggregate(custodialCopyBackend, webapp, builder, reIndexer, utils)
   .settings(
     publish / skip := true
   )
@@ -44,8 +44,7 @@ lazy val custodialCopyBackend = (project in file("custodial-copy-backend"))
       preservicaClient,
       snsClient,
       sqsClient,
-      fs2Core,
-      ocfl
+      fs2Core
     )
   )
   .dependsOn(utils)
@@ -61,12 +60,24 @@ lazy val utils = (project in file("utils"))
       log4jTemplateJson,
       log4CatsSlf4j,
       log4Cats,
+      ocfl,
       pureConfigCatsEffect,
       pureConfig,
       scalaXml,
       doobieCore,
       sqlite
     )
+  )
+
+lazy val reIndexer = (project in file("custodial-copy-re-indexer"))
+  .enablePlugins(UniversalPlugin, JavaAppPackaging)
+  .settings(commonSettings)
+  .dependsOn(utils)
+  .settings(
+    libraryDependencies ++= Seq(
+      declineEffect,
+    ),
+    dockerCommands := dockerCommands.value.dropRight(1) :+ ExecCmd("ENTRYPOINT", "java", "-Xmx2g", "-jar", s"/opt/${(assembly / assemblyJarName).value}")
   )
 
 lazy val builder = (project in file("custodial-copy-db-builder"))
@@ -78,8 +89,7 @@ lazy val builder = (project in file("custodial-copy-db-builder"))
     scalacOptions += "-Wunused:imports",
     assembly / assemblyJarName := "custodial-copy-db-builder.jar",
     libraryDependencies ++= Seq(
-      ocfl,
-      fs2,
+      fs2Core,
       sqsClient
     )
   )
@@ -95,7 +105,6 @@ lazy val webapp = (project in file("custodial-copy-webapp"))
     libraryDependencies ++= Seq(
       http4sEmber,
       http4sDsl,
-      ocfl
     )
   )
   .dependsOn(utils)
