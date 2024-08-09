@@ -14,8 +14,8 @@ import uk.gov.nationalarchives.custodialcopy.CustodialCopyObject.MetadataObject
 import uk.gov.nationalarchives.custodialcopy.Main.IdWithSourceAndDestPaths
 import uk.gov.nationalarchives.custodialcopy.Message.{IoReceivedSnsMessage, ReceivedSnsMessage, SendSnsMessage}
 import uk.gov.nationalarchives.custodialcopy.OcflService.MissingAndChangedObjects
-import uk.gov.nationalarchives.custodialcopy.Processor.ObjectStatus.{Created, Updated}
-import uk.gov.nationalarchives.custodialcopy.Processor.ObjectType.Metadata
+import uk.gov.nationalarchives.custodialcopy.Processor.ObjectStatus.{Created, Deleted, Updated}
+import uk.gov.nationalarchives.custodialcopy.Processor.ObjectType.{Metadata, MetadataAndPotentialBitstreams}
 import uk.gov.nationalarchives.dp.client.EntityClient.IoMetadata
 import uk.gov.nationalarchives.dp.client.EntityClient.RepresentationType.*
 import uk.gov.nationalarchives.dp.client.EntityClient.EntityType.*
@@ -25,10 +25,52 @@ import java.util.UUID
 import scala.xml.Elem
 
 class ProcessorTest extends AnyFlatSpec with MockitoSugar {
+  "process" should "delete the file paths under an IO, if an IO message has 'deleted' set to 'true'" in {
+    val paths = List("destinationPathToDelete", "destinationPath2ToDelete")
+    val utils = new ProcessorTestUtils(pathsOfObjectsUnderIo = paths)
+
+    utils.processor.process(utils.duplicatesIoMessageResponse, true).unsafeRunSync()
+    utils.verifyCallsAndArguments(
+      repTypes = Nil,
+      repIndexes = Nil,
+      idsOfEntityToGetMetadataFrom = Nil,
+      entityTypesToGetMetadataFrom = Nil,
+      xmlRequestsToValidate = Nil,
+      createdIdSourceAndDestinationPathAndId = Nil,
+      drosToLookup = Nil,
+      snsMessagesToSend = List(
+        SendSnsMessage(InformationObject, utils.ioId, MetadataAndPotentialBitstreams, Deleted, "")
+      ),
+      destinationPathsToDelete = paths
+    )
+  }
+
+  "process" should "throw an Exception if a CO message has 'deleted' set to 'true'" in {
+    val utils = new ProcessorTestUtils()
+
+    val ex = intercept[Exception] {
+      utils.processor.process(utils.duplicatesCoMessageResponses, true).unsafeRunSync()
+    }
+
+    ex.getMessage should equal(s"A Content Object '${utils.coId}' has been deleted in Preservica")
+    utils.verifyCallsAndArguments(
+      repTypes = Nil,
+      repIndexes = Nil,
+      idsOfEntityToGetMetadataFrom = Nil,
+      entityTypesToGetMetadataFrom = Nil,
+      xmlRequestsToValidate = Nil,
+      createdIdSourceAndDestinationPathAndId = Nil,
+      drosToLookup = Nil,
+      snsMessagesToSend = Nil,
+      receiptHandles = Nil,
+      destinationPathsToDelete = Nil
+    )
+  }
+
   "process" should "retrieve the metadata if an information object update is received" in {
     val utils = new ProcessorTestUtils()
 
-    utils.processor.process(utils.duplicatesIoMessageResponse).unsafeRunSync()
+    utils.processor.process(utils.duplicatesIoMessageResponse, false).unsafeRunSync()
     utils.verifyCallsAndArguments(
       repTypes = Nil,
       repIndexes = Nil,
@@ -41,7 +83,7 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
     val id = utils.coId
     val parentRef = utils.ioId
 
-    utils.processor.process(utils.duplicatesCoMessageResponses).unsafeRunSync()
+    utils.processor.process(utils.duplicatesCoMessageResponses, false).unsafeRunSync()
 
     utils.verifyCallsAndArguments(
       1,
@@ -65,7 +107,7 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
     val utils = new ProcessorTestUtils(parentRefExists = false)
 
     val ex = intercept[Exception] {
-      utils.processor.process(utils.duplicatesCoMessageResponses).unsafeRunSync()
+      utils.processor.process(utils.duplicatesCoMessageResponses, false).unsafeRunSync()
     }
 
     ex.getMessage should equal("Cannot get IO reference from CO")
@@ -93,7 +135,7 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
     val id = utils.coId
 
     val ex = intercept[Exception] {
-      utils.processor.process(utils.duplicatesCoMessageResponses).unsafeRunSync()
+      utils.processor.process(utils.duplicatesCoMessageResponses, false).unsafeRunSync()
     }
 
     ex.getMessage should equal(
@@ -118,7 +160,7 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
     val id = utils.coId
     val parentRef = utils.ioId
 
-    utils.processor.process(utils.duplicatesIoMessageResponse).unsafeRunSync()
+    utils.processor.process(utils.duplicatesIoMessageResponse, false).unsafeRunSync()
     utils.verifyCallsAndArguments(
       0,
       0,
@@ -140,7 +182,7 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
     val id = utils.coId
     val parentRef = utils.ioId
 
-    utils.processor.process(utils.duplicatesCoMessageResponses).unsafeRunSync()
+    utils.processor.process(utils.duplicatesCoMessageResponses, false).unsafeRunSync()
     utils.verifyCallsAndArguments(
       1,
       1,
@@ -162,7 +204,7 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
   "process" should "not create nor update objects if no objects are missing or changed" in {
     val utils = new ProcessorTestUtils()
 
-    utils.processor.process(utils.duplicatesIoMessageResponse).unsafeRunSync()
+    utils.processor.process(utils.duplicatesIoMessageResponse, false).unsafeRunSync()
     utils.verifyCallsAndArguments(
       repTypes = Nil,
       repIndexes = Nil,
@@ -194,7 +236,7 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
         )
       )
 
-    utils.processor.process(utils.duplicatesIoMessageResponse).unsafeRunSync()
+    utils.processor.process(utils.duplicatesIoMessageResponse, false).unsafeRunSync()
     utils.verifyCallsAndArguments(
       repTypes = Nil,
       repIndexes = Nil,
@@ -234,7 +276,7 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
         )
       )
 
-    utils.processor.process(utils.duplicatesIoMessageResponse).unsafeRunSync()
+    utils.processor.process(utils.duplicatesIoMessageResponse, false).unsafeRunSync()
 
     utils.verifyCallsAndArguments(
       repTypes = Nil,
@@ -272,10 +314,10 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
 
     val response: MessageResponse[ReceivedSnsMessage] = MessageResponse[ReceivedSnsMessage](
       "receiptHandle2",
-      IoReceivedSnsMessage(changedFileId)
+      IoReceivedSnsMessage(changedFileId, false)
     )
 
-    utils.processor.process(response).unsafeRunSync()
+    utils.processor.process(response, false).unsafeRunSync()
 
     utils.verifyCallsAndArguments(
       repTypes = Nil,
@@ -326,9 +368,9 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
     val response: MessageResponse[ReceivedSnsMessage] =
       MessageResponse[ReceivedSnsMessage](
         "receiptHandle1",
-        IoReceivedSnsMessage(missingFileId)
+        IoReceivedSnsMessage(missingFileId, false)
       )
-    utils.processor.process(response).unsafeRunSync()
+    utils.processor.process(response, false).unsafeRunSync()
 
     utils.verifyCallsAndArguments(
       repTypes = Nil,
@@ -371,7 +413,7 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
       )
     ).when(utils.entityClient).metadataForEntity(ArgumentMatchers.argThat(new EntityWithSpecificType("IO")))
 
-    val res = utils.processor.process(utils.duplicatesIoMessageResponse).attempt.unsafeRunSync()
+    val res = utils.processor.process(utils.duplicatesIoMessageResponse, false).attempt.unsafeRunSync()
 
     res.left.foreach(
       _.getMessage should equal(
@@ -402,7 +444,7 @@ class ProcessorTest extends AnyFlatSpec with MockitoSugar {
   "process" should "throw an Exception if an Unexpected Exception was returned from the OCFL service" in {
     val utils = new ProcessorTestUtils(throwErrorInMissingAndChangedObjects = true)
 
-    val res = utils.processor.process(utils.duplicatesIoMessageResponse).attempt.unsafeRunSync()
+    val res = utils.processor.process(utils.duplicatesIoMessageResponse, false).attempt.unsafeRunSync()
 
     res.left.foreach(_.getMessage should equal("Unexpected Error"))
 

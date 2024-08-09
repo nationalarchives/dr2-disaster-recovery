@@ -3,7 +3,7 @@ package uk.gov.nationalarchives.custodialcopy
 import cats.effect.IO
 import cats.effect.std.Semaphore
 import io.ocfl.api.exception.{CorruptObjectException, NotFoundException}
-import io.ocfl.api.model.{DigestAlgorithm, ObjectVersionId, VersionInfo}
+import io.ocfl.api.model.{DigestAlgorithm, ObjectVersionId, OcflObjectVersionFile, VersionInfo}
 import io.ocfl.api.{OcflConfig, OcflObjectUpdater, OcflOption, OcflRepository}
 import io.ocfl.core.OcflRepositoryBuilder
 import io.ocfl.core.extension.storage.layout.config.HashedNTupleLayoutConfig
@@ -14,6 +14,7 @@ import uk.gov.nationalarchives.custodialcopy.OcflService.*
 import java.nio.file.Paths
 import java.util.UUID
 import scala.jdk.FunctionConverters.*
+import scala.jdk.CollectionConverters.*
 
 class OcflService(ocflRepository: OcflRepository, semaphore: Semaphore[IO]) {
   def createObjects(paths: List[IdWithSourceAndDestPaths]): IO[Unit] = semaphore.acquire >> IO.blocking {
@@ -26,18 +27,25 @@ class OcflService(ocflRepository: OcflRepository, semaphore: Semaphore[IO]) {
           id.toHeadVersion,
           new VersionInfo(),
           { (updater: OcflObjectUpdater) =>
-            paths.map { idWithSourceAndDestPath =>
+            paths.foreach { idWithSourceAndDestPath =>
               updater.addPath(
                 idWithSourceAndDestPath.sourceNioFilePath,
                 idWithSourceAndDestPath.destinationPath,
                 OcflOption.OVERWRITE
               )
             }
-            ()
           }.asJava
         )
       }
       .toList
+  } >> semaphore.release
+
+  def deleteObjects(ioId: UUID, destinationFilePaths: List[String]): IO[Unit] = semaphore.acquire >> IO.blocking {
+    ocflRepository.updateObject(
+      ioId.toHeadVersion,
+      new VersionInfo(),
+      { (updater: OcflObjectUpdater) => destinationFilePaths.foreach { path => updater.removeFile(path) } }.asJava
+    )
   } >> semaphore.release
 
   def getMissingAndChangedObjects(
@@ -82,6 +90,27 @@ class OcflService(ocflRepository: OcflRepository, semaphore: Semaphore[IO]) {
       val (missingObjects, changedObjects) = missingAndChangedPair
       MissingAndChangedObjects(missingObjects, changedObjects)
     }
+
+  def getAllFilePathsOnAnObject(ioId: UUID): IO[List[String]] =
+    IO.blocking(ocflRepository.getObject(ioId.toHeadVersion))
+      .map(_.getFiles.asScala.toList.map(_.getPath))
+      .handleErrorWith {
+        case nfe: NotFoundException => IO.raiseError(new Exception(s"Object id $ioId does not exist"))
+        case coe: CorruptObjectException =>
+          IO.blocking(ocflRepository.purgeObject(ioId.toString)) >>
+            IO.raiseError(
+              new Exception(
+                s"Object $ioId is corrupt. The object has been purged and the error will be rethrown so the process can try again",
+                coe
+              )
+            )
+        case e: Throwable =>
+          IO.raiseError(
+            new Exception(
+              s"'getObject' returned an unexpected error '$e' when called with object id $ioId"
+            )
+          )
+      }
 }
 object OcflService {
   extension (uuid: UUID) def toHeadVersion: ObjectVersionId = ObjectVersionId.head(uuid.toString)

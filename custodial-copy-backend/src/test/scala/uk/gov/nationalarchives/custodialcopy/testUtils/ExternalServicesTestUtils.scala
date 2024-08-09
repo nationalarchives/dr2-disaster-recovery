@@ -65,6 +65,7 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
       coId: UUID = UUID.fromString("3393cd51-3c54-41a0-a9d4-5234a0ae47bf"),
       coId2: UUID = UUID.fromString("ed384a5c-689b-4f56-a47b-3690259a9998"),
       coId3: UUID = UUID.fromString("07747488-7976-4481-8fa4-b515c842d9a0"),
+      entityHasBeenDeleted: Boolean = false,
       metadataElems: Seq[Elem] = Nil,
       bitstreamInfo1: Seq[BitStreamInfo] = Nil,
       bitstreamInfo2: Seq[BitStreamInfo] = Nil,
@@ -74,12 +75,24 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
     val entityType = Some(ContentObject)
     val contentObjectResponse =
       Entity(entityType, coId, None, None, deleted = false, entityType.map(_.entityPath), parent = Option(ioId))
+    val informationObjectResponse =
+      Entity(entityType, ioId, None, None, deleted = false, entityType.map(_.entityPath), parent = Option(UUID.randomUUID()))
+
     val urlToRepresentations = Seq(
       s"http://localhost/api/entity/information-objects/$ioId/representations/Preservation/1"
     ) ++ (if addAccessRepUrl then Seq(s"http://localhost/api/entity/information-objects/$ioId/representations/Access/1")
           else Nil)
-    Seq((coId, bitstreamInfo1), (coId2, bitstreamInfo2), (coId3, bitstreamInfo1)).foreach { case (id, bitstreamInfo) =>
-      when(preservicaClient.getBitstreamInfo(ArgumentMatchers.eq(id))).thenReturn(IO(bitstreamInfo))
+
+    val contentObjectsFromPreservica =
+      Seq((coId, entityHasBeenDeleted), (coId2, false), (coId3, false)).map { (id, hasBeenDeleted) =>
+        val contentObject = contentObjectResponse.copy(ref = id, deleted = hasBeenDeleted)
+        when(preservicaClient.getEntity(id, ContentObject))
+          .thenReturn(IO(contentObject))
+        id
+      }
+
+    contentObjectsFromPreservica.zip(Seq(bitstreamInfo1, bitstreamInfo2, bitstreamInfo1)).foreach { case (id, bitstreamInfo) =>
+      when(preservicaClient.getBitstreamInfo(ArgumentMatchers.eq(id))).thenReturn(IO.pure(bitstreamInfo))
     }
     val combinedBitstreamInfoResponses = bitstreamInfo1 ++ bitstreamInfo2
 
@@ -146,10 +159,9 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
       )
     ).thenReturn(IO(Seq(contentObjectResponse.copy(ref = coId3))))
 
-    Seq(coId, coId2).foreach { id =>
-      when(preservicaClient.getEntity(id, ContentObject))
-        .thenReturn(IO(contentObjectResponse.copy(ref = id)))
-    }
+    when(preservicaClient.getEntity(ioId, InformationObject))
+      .thenReturn(IO(informationObjectResponse.copy(ref = ioId, deleted = entityHasBeenDeleted)))
+
     combinedBitstreamInfoResponses.foreach { bitstreamInfo =>
       when(
         preservicaClient
@@ -240,10 +252,11 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
     s"$id/${potentialPath.map(_ + "/").getOrElse("")}${entityType}_Metadata.xml"
 
   class MainTestUtils(
-      typesOfSqsMessages: List[EntityType] = List(InformationObject),
+      typesOfSqsMsgAndDeletionStatus: List[(EntityType, Boolean)] = List((InformationObject, false)),
       objectVersion: Int = 1,
       typesOfMetadataFilesInRepo: List[EntityType] = Nil,
       fileContentToWriteToEachFileInRepo: List[String] = Nil,
+      entityDeleted: Boolean = false,
       metadataElemsPreservicaResponse: Seq[Elem] = Seq(
         <Metadata><Ref/><Entity/><Content><thing xmlns="http://www.mockSchema.com/test/v42"></thing></Content></Metadata>
       ),
@@ -278,15 +291,15 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
     lazy val repoDir: Path = Files.createTempDirectory("repo")
     lazy val repo: OcflRepository = createTestRepo(repoDir)
 
-    private val coIds: Seq[UUID] = List(coId1, coId2, coId3)
+    private val coIds: Seq[UUID] = List(coId1, coId2, coId3, coId1)
     private val sqsMessages: List[ReceivedSnsMessage] =
-      typesOfSqsMessages.zipWithIndex.flatMap { case (entityType, index) =>
+      typesOfSqsMsgAndDeletionStatus.zipWithIndex.flatMap { case ((entityType, hasBeenDeleted), index) =>
         entityType match { // create duplicates in order to test deduplication
-          case InformationObject => (1 to 2).map(_ => IoReceivedSnsMessage(ioId))
+          case InformationObject => (1 to 2).map(_ => IoReceivedSnsMessage(ioId, hasBeenDeleted))
           case ContentObject =>
             val coId = coIds(index)
-            (1 to 2).map(_ => CoReceivedSnsMessage(coId))
-          case StructuralObject => (1 to 2).map(_ => SoReceivedSnsMessage(UUID.randomUUID))
+            (1 to 2).map(_ => CoReceivedSnsMessage(coId, hasBeenDeleted))
+          case StructuralObject => (1 to 2).map(_ => SoReceivedSnsMessage(UUID.randomUUID, hasBeenDeleted))
         }
       }
     val sqsClient: DASQSClient[IO] = mockSqs(sqsMessages)
@@ -296,12 +309,15 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
     lazy val expectedCoMetadataFileDestinationPath: String = metadataFile(ioId, coType, Some(s"Preservation_1/$coId1"))
     lazy val expectedCoFileDestinationPath: String =
       s"$ioId/Preservation_1/$coId1/original/g1/${bitstreamInfo1Responses.head.name}"
+    lazy val expectedCoFileBitstream2DestinationPath: String =
+      s"$ioId/Preservation_1/$coId1/derived/g2/${bitstreamInfo1Responses.last.name}"
 
     val preservicaClient: EntityClient[IO, Fs2Streams[IO]] = mockPreservicaClient(
       ioId,
       coId1,
       coId2,
       coId3,
+      entityHasBeenDeleted = entityDeleted,
       metadataElems = metadataElemsPreservicaResponse,
       bitstreamInfo1 = bitstreamInfo1Responses,
       bitstreamInfo2 = bitstreamInfo2Responses,
@@ -363,9 +379,12 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
 
     private val bitstreamNames = (bitstreamInfo1Responses ++ bitstreamInfo2Responses).map(_.name)
 
-    fileContentToWriteToEachFileInRepo.zip(bitstreamNames).foreach { case (data, name) =>
-      addFileToRepo(ioId, repo, data, s"$ioId/$name", expectedCoFileDestinationPath)
-    }
+    fileContentToWriteToEachFileInRepo
+      .lazyZip(bitstreamNames)
+      .lazyZip(List(expectedCoFileDestinationPath, expectedCoFileBitstream2DestinationPath))
+      .foreach { case (data, name, destinationPath) =>
+        addFileToRepo(ioId, repo, data, s"$ioId/$name", destinationPath)
+      }
     val semaphore: Semaphore[IO] = Semaphore[IO](1).unsafeRunSync()
     val ocflService = new OcflService(repo, semaphore)
     val xmlValidator: ValidateXmlAgainstXsd[IO] = ValidateXmlAgainstXsd[IO](XipXsdSchemaV7)
@@ -390,17 +409,23 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
       urlsToRepresentations: Seq[String] = Seq("http://testurl/representations/Preservation/1"),
       missingObjects: List[CustodialCopyObject] = Nil,
       changedObjects: List[CustodialCopyObject] = Nil,
+      pathsOfObjectsUnderIo: List[String] = Nil,
       throwErrorInMissingAndChangedObjects: Boolean = false
   ) {
     val config: Config = Config("", "", "queueUrl", "", "", Option(URI.create("https://example.com")), "", "topicArn")
     val ioId: UUID = UUID.randomUUID()
     val coId: UUID = UUID.randomUUID()
+    val soId: UUID = UUID.randomUUID()
 
-    lazy val coMessage: CoReceivedSnsMessage = CoReceivedSnsMessage(coId)
-    lazy val ioMessage: IoReceivedSnsMessage = IoReceivedSnsMessage(ioId)
+    lazy val coMessage: CoReceivedSnsMessage = CoReceivedSnsMessage(coId, false)
+    lazy val ioMessage: IoReceivedSnsMessage = IoReceivedSnsMessage(ioId, false)
+    lazy val soMessage: SoReceivedSnsMessage = SoReceivedSnsMessage(soId, false)
     val sqsClient: DASQSClient[IO] = mock[DASQSClient[IO]]
     val entityClient: EntityClient[IO, Fs2Streams[IO]] = mock[EntityClient[IO, Fs2Streams[IO]]]
     val snsClient: DASNSClient[IO] = mock[DASNSClient[IO]]
+
+    val duplicatesSoMessageResponse: MessageResponse[ReceivedSnsMessage] =
+      MessageResponse[ReceivedSnsMessage]("receiptHandle0", soMessage)
 
     val duplicatesIoMessageResponse: MessageResponse[ReceivedSnsMessage] =
       MessageResponse[ReceivedSnsMessage]("receiptHandle1", ioMessage)
@@ -476,7 +501,8 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
     private val metadataXmlStringToValidate: ArgumentCaptor[String] = ArgumentCaptor.forClass(classOf[String])
     private val droLookupCaptor: ArgumentCaptor[List[CustodialCopyObject]] =
       ArgumentCaptor.forClass(classOf[List[CustodialCopyObject]])
-
+    private val ioToDeleteObjectsFromCaptor: ArgumentCaptor[UUID] = ArgumentCaptor.forClass(classOf[UUID])
+    private val pathsToDeleteCaptor: ArgumentCaptor[List[String]] = ArgumentCaptor.forClass(classOf[List[String]])
     private val topicArnCaptor: ArgumentCaptor[String] = ArgumentCaptor.forClass(classOf[String])
     private val messagesCaptor: ArgumentCaptor[List[SendSnsMessage]] =
       ArgumentCaptor.forClass(classOf[List[SendSnsMessage]])
@@ -485,6 +511,7 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
     private def mockOcflService(
         missingObjects: List[CustodialCopyObject] = Nil,
         changedObjects: List[CustodialCopyObject] = Nil,
+        pathsOfObjects: List[String] = Nil,
         throwErrorInMissingAndChangedObjects: Boolean = false
     ): OcflService = {
       val ocflService = mock[OcflService]
@@ -496,6 +523,8 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
         when(ocflService.getMissingAndChangedObjects(any[List[MetadataObject]]))
           .thenReturn(IO.pure(MissingAndChangedObjects(missingObjects, changedObjects)))
       when(ocflService.createObjects(any[List[IdWithSourceAndDestPaths]])).thenReturn(IO.unit)
+      when(ocflService.getAllFilePathsOnAnObject(any[UUID])).thenReturn(IO.pure(pathsOfObjects))
+      when(ocflService.deleteObjects(any[UUID], any[List[String]])).thenReturn(IO.unit)
 
       ocflService
     }
@@ -555,7 +584,7 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
     when(sqsClient.deleteMessage(ArgumentMatchers.eq("queueUrl"), ArgumentMatchers.startsWith("receiptHandle")))
       .thenReturn(IO.pure(DeleteMessageResponse.builder.build))
 
-    val ocflService: OcflService = mockOcflService(missingObjects, changedObjects, throwErrorInMissingAndChangedObjects)
+    val ocflService: OcflService = mockOcflService(missingObjects, changedObjects, pathsOfObjectsUnderIo, throwErrorInMissingAndChangedObjects)
     val xmlValidator: ValidateXmlAgainstXsd[IO] = spy(ValidateXmlAgainstXsd[IO](XipXsdSchemaV7))
 
     val processor: Processor = new Processor(config, sqsClient, ocflService, entityClient, xmlValidator, snsClient)
@@ -591,6 +620,7 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
         xmlRequestsToValidate: List[Elem] = List(ioXmlToValidate),
         createdIdSourceAndDestinationPathAndId: List[List[IdWithSourceAndDestPaths]] = Nil,
         drosToLookup: List[List[String]] = List(List(s"$ioId/IO_Metadata.xml")),
+        destinationPathsToDelete: List[String] = Nil,
         snsMessagesToSend: List[SendSnsMessage] = Nil,
         receiptHandles: List[String] = List("receiptHandle1")
     ): Assertion = {
@@ -610,6 +640,10 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
       )
       verify(ocflService, times(createdIdSourceAndDestinationPathAndId.length))
         .createObjects(idWithSourceAndDestPathsCaptor.capture())
+
+      val numOfTimesToDeleteObjects = if destinationPathsToDelete.nonEmpty then 1 else 0
+      verify(ocflService, times(numOfTimesToDeleteObjects))
+        .deleteObjects(ioToDeleteObjectsFromCaptor.capture(), pathsToDeleteCaptor.capture())
       verify(sqsClient, times(receiptHandles.length))
         .deleteMessage(queueUrlCaptor.capture, receiptHandleCaptor.capture)
 
@@ -649,6 +683,10 @@ object ExternalServicesTestUtils extends MockitoSugar with EitherValues {
       }
       val capturedLookupDestinationPaths = droLookupCaptor.getAllValues.asScala.toList.map(_.map(_.destinationFilePath))
       capturedLookupDestinationPaths should equal(drosToLookup)
+
+      if numOfTimesToDeleteObjects > 0 then
+        ioToDeleteObjectsFromCaptor.getValue should equal(ioId)
+        pathsToDeleteCaptor.getValue should equal(destinationPathsToDelete)
 
       if (numOfTimesSnsMsgShouldBeSent > 0) {
         topicArnCaptor.getValue should equal("topicArn")

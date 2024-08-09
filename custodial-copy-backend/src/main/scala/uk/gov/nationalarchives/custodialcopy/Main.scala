@@ -41,14 +41,15 @@ object Main extends IOApp {
   given Decoder[ReceivedSnsMessage] = (c: HCursor) =>
     for {
       id <- c.downField("id").as[String]
+      deleted <- c.downField("deleted").as[Boolean]
     } yield {
       val typeAndRef = id.split(":")
       val ref = UUID.fromString(typeAndRef.last)
       val entityType = typeAndRef.head
       entityType match {
-        case "io" => IoReceivedSnsMessage(ref)
-        case "co" => CoReceivedSnsMessage(ref)
-        case "so" => SoReceivedSnsMessage(ref)
+        case "io" => IoReceivedSnsMessage(ref, deleted)
+        case "co" => CoReceivedSnsMessage(ref, deleted)
+        case "so" => SoReceivedSnsMessage(ref, deleted)
       }
     }
 
@@ -83,15 +84,26 @@ object Main extends IOApp {
           logger <- Slf4jLogger.create[IO]
           _ <- logger.info(s"Processing ${messageResponses.length} messages")
           _ <- logger.info(messageResponses.map(_.message.ref).mkString(","))
-          fibers <- dedupeMessages(messageResponses).parTraverse(processor.process(_).start)
-          fiberResults <- fibers.traverse(_.join)
-          _ <- logger.info(s"${fiberResults.count(_.isSuccess)} messages out of ${fibers.length} unique messages processed successfully")
-          _ <- logger.info(s"${fiberResults.count(_.isError)} messages out of ${fibers.length} unique messages failed")
-          _ <- fiberResults traverse {
+
+          (deletedEntities, nonDeletedEntities) = dedupeMessages(messageResponses).partition(_.message.deleted)
+
+          fibersForNonDeletedEntities <- nonDeletedEntities.parTraverse(processor.process(_, false).start)
+          ndeFiberResults <- fibersForNonDeletedEntities.traverse(_.join)
+
+          fibersForDeletedEntities <- deletedEntities.parTraverse(processor.process(_, true).start)
+          deFiberResults <- fibersForDeletedEntities.traverse(_.join)
+
+          allFibers = fibersForNonDeletedEntities ++ fibersForDeletedEntities
+          allFiberResults = ndeFiberResults ++ deFiberResults
+
+          _ <- logger.info(s"${allFiberResults.count(_.isSuccess)} messages out of ${allFibers.length} unique messages processed successfully")
+          _ <- logger.info(s"${allFiberResults.count(_.isError)} messages out of ${allFibers.length} unique messages failed")
+
+          _ <- allFiberResults traverse {
             case Outcome.Errored(e) => logError(e) >> IO.unit
             case _                  => IO.unit
           }
-        } yield fiberResults
+        } yield allFiberResults
       }
 
   private def dedupeMessages(messages: List[MessageResponse[ReceivedSnsMessage]]): List[MessageResponse[ReceivedSnsMessage]] =

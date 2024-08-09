@@ -15,8 +15,8 @@ import uk.gov.nationalarchives.custodialcopy.CustodialCopyObject.*
 import uk.gov.nationalarchives.custodialcopy.Main.{Config, IdWithSourceAndDestPaths}
 import uk.gov.nationalarchives.custodialcopy.Message.*
 import uk.gov.nationalarchives.custodialcopy.Processor.ObjectStatus
-import uk.gov.nationalarchives.custodialcopy.Processor.ObjectStatus.{Created, Updated}
-import uk.gov.nationalarchives.custodialcopy.Processor.ObjectType.{Bitstream, Metadata}
+import uk.gov.nationalarchives.custodialcopy.Processor.ObjectStatus.{Created, Deleted, Updated}
+import uk.gov.nationalarchives.custodialcopy.Processor.ObjectType.{Bitstream, Metadata, MetadataAndPotentialBitstreams}
 import uk.gov.nationalarchives.dp.client.{EntityClient, ValidateXmlAgainstXsd}
 import uk.gov.nationalarchives.dp.client.EntityClient.RepresentationType.*
 import uk.gov.nationalarchives.dp.client.EntityClient.EntityType.*
@@ -134,9 +134,9 @@ class Processor(
   private def createMetadataFileName(entityTypeShort: String) = s"${entityTypeShort}_Metadata.xml"
 
   private def toCustodialCopyObject(receivedSnsMessage: ReceivedSnsMessage): IO[List[CustodialCopyObject]] = receivedSnsMessage match {
-    case IoReceivedSnsMessage(ref) =>
+    case IoReceivedSnsMessage(ref, deleted) =>
       for {
-        entity <- fromType[IO](InformationObject.entityTypeShort, ref, None, None, deleted = false)
+        entity <- fromType[IO](InformationObject.entityTypeShort, ref, None, None, deleted = deleted)
         metadataFileName = createMetadataFileName(InformationObject.entityTypeShort)
         metadataObject <- entityClient.metadataForEntity(entity).flatMap { metadata =>
           val destinationFilePath = createDestinationFilePath(entity.ref, fileName = metadataFileName)
@@ -149,7 +149,7 @@ class Processor(
           )
         }
       } yield metadataObject
-    case CoReceivedSnsMessage(ref) =>
+    case CoReceivedSnsMessage(ref, deleted) =>
       for {
         bitstreamInfoPerCo <- entityClient.getBitstreamInfo(ref)
         entity <- fromType[IO](
@@ -157,7 +157,7 @@ class Processor(
           ref,
           None,
           None,
-          deleted = false,
+          deleted = deleted,
           parent = bitstreamInfoPerCo.headOption.flatMap(_.parentRef)
         )
         parentRef <- IO.fromOption(entity.parent)(new Exception("Cannot get IO reference from CO"))
@@ -205,7 +205,7 @@ class Processor(
           removeFileExtension(bitStreamInfo.name)
         )
       } ++ metadata
-    case SoReceivedSnsMessage(_) => IO.pure(Nil)
+    case SoReceivedSnsMessage(_, _) => IO.pure(Nil)
   }
 
   private def download(custodialCopyObject: CustodialCopyObject) = custodialCopyObject match {
@@ -264,7 +264,7 @@ class Processor(
       .apply(message)
   }
 
-  def process(messageResponse: MessageResponse[ReceivedSnsMessage]): IO[Unit] =
+  private def processNonDeletedMessages(messageResponse: MessageResponse[ReceivedSnsMessage]): IO[List[SendSnsMessage]] =
     for {
       logger <- Slf4jLogger.create[IO]
       custodialCopyObjects <- toCustodialCopyObject(messageResponse.message)
@@ -282,7 +282,33 @@ class Processor(
       createdObjsSnsMessages = missingAndChangedObjects.missingObjects.map(generateSnsMessage(_, Created))
       updatedObjsSnsMessages = missingAndChangedObjects.changedObjects.map(generateSnsMessage(_, Updated))
 
-      snsMessages: List[SendSnsMessage] = createdObjsSnsMessages ++ updatedObjsSnsMessages
+    } yield createdObjsSnsMessages ++ updatedObjsSnsMessages
+
+  private def processDeletedEntities(messageResponse: MessageResponse[ReceivedSnsMessage]): IO[List[SendSnsMessage]] =
+    messageResponse.message match {
+      case IoReceivedSnsMessage(ref, _) =>
+        for {
+          filePaths <- ocflService.getAllFilePathsOnAnObject(ref)
+          _ <- ocflService.deleteObjects(ref, filePaths)
+          deletedObjsSnsMessages = List(SendSnsMessage(InformationObject, ref, MetadataAndPotentialBitstreams, Deleted, ""))
+        } yield deletedObjsSnsMessages
+      case CoReceivedSnsMessage(ref, _) =>
+        IO.raiseError(new Exception(s"A Content Object '$ref' has been deleted in Preservica"))
+      case _ =>
+        IO.raiseError(new Exception(s"Entity type is not supported for deletion"))
+    }
+
+  def process(messageResponse: MessageResponse[ReceivedSnsMessage], entityDeleted: Boolean): IO[Unit] =
+    for {
+      logger <- Slf4jLogger.create[IO]
+      entityTypeDeletionSupported =
+        messageResponse.message match {
+          case SoReceivedSnsMessage(_, _) => false
+          case _                          => true
+        }
+      snsMessages <-
+        if entityDeleted && entityTypeDeletionSupported then processDeletedEntities(messageResponse)
+        else processNonDeletedMessages(messageResponse)
       _ <- IO.whenA(snsMessages.nonEmpty) {
         snsClient.publish[SendSnsMessage](config.topicArn)(snsMessages).map(_ => ())
       }
@@ -302,8 +328,8 @@ object Processor {
   )
 
   enum ObjectStatus:
-    case Created, Updated
+    case Created, Updated, Deleted
 
   enum ObjectType:
-    case Bitstream, Metadata
+    case Bitstream, Metadata, MetadataAndPotentialBitstreams
 }
